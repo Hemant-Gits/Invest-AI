@@ -74,52 +74,65 @@ def render():
             with st.spinner("Fetching news and running FinBERT analysis..."):
                 articles = fetch_news(selected, num_articles)
                 if not articles:
-                    st.warning("No news found. Check NEWS_API_KEY or try another symbol.")
+                    st.warning("No recent finance news found for this symbol. Try another stock.")
                 else:
-                    titles = [a.get("title", "") for a in articles]
-                    results = analyzer.analyze_batch(titles)
-                    agg = analyzer.aggregate_sentiment(results)
+                    usable_articles = [a for a in articles if a.get("title")]
+                    if not usable_articles:
+                        st.warning("News articles were found but had no usable titles.")
+                    else:
+                        provider = articles[0].get("_provider", "yahoo_finance")
+                        source_labels = {
+                            "newsapi": "NewsAPI",
+                            "yahoo_finance": "Yahoo Finance",
+                            "google_news": "Google News",
+                        }
+                        source_label = source_labels.get(provider, "Live News")
+                        st.caption(f"Loaded {len(articles)} articles from {source_label}.")
 
-                    m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("Market Mood", agg["market_mood"])
-                    m2.metric("Positive %", f"{agg['positive_pct']:.1f}%")
-                    m3.metric("Negative %", f"{agg['negative_pct']:.1f}%")
-                    m4.metric("Avg Sentiment", f"{agg['avg_score']:.3f}")
+                        titles = [a["title"] for a in usable_articles]
+                        results = analyzer.analyze_batch(titles)
+                        agg = analyzer.aggregate_sentiment(results)
 
-                    mood_color = {"Bullish": "green", "Bearish": "red", "Neutral": "orange"}
-                    st.markdown(
-                        f"**Market Mood Indicator:** :{mood_color.get(agg['market_mood'], 'orange')}[{agg['market_mood']}]"
-                    )
+                        m1, m2, m3, m4 = st.columns(4)
+                        m1.metric("Market Mood", agg["market_mood"])
+                        m2.metric("Positive %", f"{agg['positive_pct']:.1f}%")
+                        m3.metric("Negative %", f"{agg['negative_pct']:.1f}%")
+                        m4.metric("Avg Sentiment", f"{agg['avg_score']:.3f}")
 
-                    sentiment_rows = []
-                    for article, result in zip(articles, results):
-                        sentiment_rows.append({
-                            "Title": article.get("title", "")[:80],
-                            "Sentiment": result.label.capitalize(),
-                            "Score": f"{result.polarity:.3f}",
-                            "Confidence": f"{result.confidence:.1%}",
-                            "URL": article.get("url", ""),
+                        mood_color = {"Bullish": "green", "Bearish": "red", "Neutral": "orange"}
+                        st.markdown(
+                            f"**Market Mood Indicator:** :{mood_color.get(agg['market_mood'], 'orange')}[{agg['market_mood']}]"
+                        )
+
+                        sentiment_rows = []
+                        for article, result in zip(usable_articles, results):
+                            sentiment_rows.append({
+                                "Title": article.get("title", "")[:80],
+                                "Sentiment": result.label.capitalize(),
+                                "Score": f"{result.polarity:.3f}",
+                                "Confidence": f"{result.confidence:.1%}",
+                                "URL": article.get("url", ""),
+                            })
+
+                        st.dataframe(pd.DataFrame(sentiment_rows), use_container_width=True)
+
+                        pie_data = pd.DataFrame({
+                            "Sentiment": ["Positive", "Negative", "Neutral"],
+                            "Percentage": [agg["positive_pct"], agg["negative_pct"], agg["neutral_pct"]],
                         })
+                        fig_pie = px.pie(pie_data, values="Percentage", names="Sentiment", title="Sentiment Distribution")
+                        st.plotly_chart(fig_pie, use_container_width=True)
 
-                    st.dataframe(pd.DataFrame(sentiment_rows), use_container_width=True)
+                        trend_data = pd.DataFrame(sentiment_rows)
+                        trend_data["Index"] = range(len(trend_data))
+                        fig_trend = px.bar(
+                            trend_data, x="Index", y="Score", color="Sentiment",
+                            title="Sentiment Trend Across Recent Articles",
+                            color_discrete_map={"Positive": "#2ecc71", "Negative": "#e74c3c", "Neutral": "#95a5a6"},
+                        )
+                        st.plotly_chart(fig_trend, use_container_width=True)
 
-                    pie_data = pd.DataFrame({
-                        "Sentiment": ["Positive", "Negative", "Neutral"],
-                        "Percentage": [agg["positive_pct"], agg["negative_pct"], agg["neutral_pct"]],
-                    })
-                    fig_pie = px.pie(pie_data, values="Percentage", names="Sentiment", title="Sentiment Distribution")
-                    st.plotly_chart(fig_pie, use_container_width=True)
-
-                    trend_data = pd.DataFrame(sentiment_rows)
-                    trend_data["Index"] = range(len(trend_data))
-                    fig_trend = px.bar(
-                        trend_data, x="Index", y="Score", color="Sentiment",
-                        title="Sentiment Trend Across Recent Articles",
-                        color_discrete_map={"Positive": "#2ecc71", "Negative": "#e74c3c", "Neutral": "#95a5a6"},
-                    )
-                    st.plotly_chart(fig_trend, use_container_width=True)
-
-                    st.session_state["last_sentiment"] = agg
+                        st.session_state["last_sentiment"] = agg
 
     with tab_safety:
         st.subheader("Stock Safety Calculator (P/E Based)")

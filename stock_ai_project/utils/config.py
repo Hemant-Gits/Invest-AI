@@ -24,6 +24,27 @@ def _get_secret(key: str, default: str = "") -> str:
 NEWS_API_KEY = _get_secret("NEWS_API_KEY", "")
 OPENAI_API_KEY = _get_secret("OPENAI_API_KEY", "")
 
+
+def get_news_api_key() -> str:
+    """Read latest NewsAPI key from secrets/env at runtime."""
+    return _get_secret("NEWS_API_KEY", "")
+
+
+def is_news_api_key_configured() -> bool:
+    """Return True only when a real NewsAPI key is configured."""
+    key = (get_news_api_key() or NEWS_API_KEY or "").strip()
+    if not key:
+        return False
+    placeholders = {
+        "your_newsapi_key_here",
+        "your_key_from_newsapi.org",
+        "your_key",
+        "changeme",
+        "replace_me",
+    }
+    lowered = key.lower()
+    return lowered not in placeholders and not lowered.startswith("your_")
+
 NIFTY100_SECTORS = {
     "Technology": ["TCS.NS", "INFY.NS", "HCLTECH.NS", "TECHM.NS", "WIPRO.NS"],
     "Oil & Energy": ["RELIANCE.NS", "ONGC.NS", "IOC.NS"],
