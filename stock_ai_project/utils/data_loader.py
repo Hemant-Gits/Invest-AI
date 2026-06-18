@@ -52,6 +52,8 @@ def fetch_stock_history(
             return pd.DataFrame()
         df["Date"] = pd.to_datetime(df["Date"])
         df = df.sort_values("Date").reset_index(drop=True)
+        if "Close" in df.columns:
+            df = df.dropna(subset=["Close"])
         return df
     except Exception:
         return pd.DataFrame()

@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
-import shap
-
 
 FEATURE_LABELS = {
     "RSI": "RSI momentum signal",
@@ -28,6 +25,20 @@ def explain_prediction(
     feature_cols: list[str],
 ) -> dict:
     """Generate global and local SHAP explanations."""
+    try:
+        return _explain_with_shap(model, x_train, x_instance, feature_cols)
+    except Exception:
+        return _fallback_explanation(model, x_train, x_instance, feature_cols)
+
+
+def _explain_with_shap(
+    model,
+    x_train: pd.DataFrame,
+    x_instance: pd.DataFrame,
+    feature_cols: list[str],
+) -> dict:
+    import shap
+
     explainer = shap.TreeExplainer(model.model)
     shap_values = explainer.shap_values(x_train[feature_cols])
 
@@ -65,7 +76,58 @@ def explain_prediction(
     }
 
 
+def _fallback_explanation(
+    model,
+    x_train: pd.DataFrame,
+    x_instance: pd.DataFrame,
+    feature_cols: list[str],
+) -> dict:
+    """Use XGBoost feature importance when SHAP is unavailable."""
+    importance = model.feature_importance().set_index("Feature")["Importance"]
+    means = x_train[feature_cols].mean()
+    instance = x_instance[feature_cols].iloc[0]
+
+    rows = []
+    for feat in feature_cols:
+        weight = float(importance.get(feat, 0.0))
+        deviation = float(instance[feat] - means[feat])
+        sign = 1.0 if deviation >= 0 else -1.0
+        rows.append({
+            "Feature": feat,
+            "SHAP Value": weight * sign,
+            "Feature Value": float(instance[feat]),
+        })
+
+    feature_impact = pd.DataFrame(rows).sort_values("SHAP Value", key=abs, ascending=False)
+    positive = feature_impact[feature_impact["SHAP Value"] > 0].head(3)
+    negative = feature_impact[feature_impact["SHAP Value"] < 0].head(3)
+
+    def format_reason(row):
+        label = FEATURE_LABELS.get(row["Feature"], row["Feature"])
+        direction = "supports rise" if row["SHAP Value"] > 0 else "pressures decline"
+        return f"{label} {direction}"
+
+    fig_summary = _create_importance_plot(feature_impact)
+    fig_importance = fig_summary
+    fig_waterfall, ax = plt.subplots(figsize=(10, 6))
+    ax.text(0.5, 0.5, "SHAP waterfall unavailable — using feature importance", ha="center", va="center")
+    plt.tight_layout()
+
+    return {
+        "feature_impact": feature_impact,
+        "positive_reasons": [format_reason(r) for _, r in positive.iterrows()],
+        "negative_reasons": [format_reason(r) for _, r in negative.iterrows()],
+        "fig_summary": fig_summary,
+        "fig_importance": fig_importance,
+        "fig_waterfall": fig_waterfall,
+        "shap_values": None,
+        "explainer": None,
+    }
+
+
 def _create_summary_plot(shap_values, x_data):
+    import shap
+
     fig, ax = plt.subplots(figsize=(10, 6))
     shap.summary_plot(shap_values, x_data, show=False, plot_type="bar")
     plt.tight_layout()
@@ -85,6 +147,8 @@ def _create_importance_plot(feature_impact: pd.DataFrame):
 
 
 def _create_waterfall_plot(explainer, x_instance):
+    import shap
+
     fig, ax = plt.subplots(figsize=(10, 6))
     try:
         shap_values = explainer(x_instance)
@@ -93,6 +157,11 @@ def _create_waterfall_plot(explainer, x_instance):
         ax.text(0.5, 0.5, "Waterfall plot unavailable", ha="center", va="center")
     plt.tight_layout()
     return fig
+
+
+def plot_local_importance(feature_impact: pd.DataFrame):
+    """Build the local feature-importance chart for display."""
+    return _create_importance_plot(feature_impact)
 
 
 def human_explanation(change_pct: float, explanation: dict) -> str:
